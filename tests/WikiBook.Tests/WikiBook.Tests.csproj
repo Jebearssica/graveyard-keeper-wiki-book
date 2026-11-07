@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+      Out-of-game harness for the Unity-free core: dataset parsing, alias/redirect resolution, fuzzy ranking and
+      quality-variant grouping. It compiles the same source files the plugin uses, so CI exercises the real code
+      without launching Graveyard Keeper.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>WikiBook.Tests</AssemblyName>
+    <RootNamespace>WikiBook.Tests</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\Json.cs" Link="Core\Json.cs" />
+    <Compile Include="..\..\WikiData.cs" Link="Core\WikiData.cs" />
+    <Compile Include="..\..\WikiEntry.cs" Link="Core\WikiEntry.cs" />
+    <Compile Include="..\..\WikiSearch.cs" Link="Core\WikiSearch.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\data\wiki-zh-Hans.json" Link="data\wiki-zh-Hans.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,106 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # The Unity-free core (dataset parsing, aliases, ranking) runs without the game.
+      - name: Core tests
+        shell: pwsh
+        run: dotnet run --project tests/WikiBook.Tests/WikiBook.Tests.csproj -c Release --nologo
+
+      # BepInEx is the only external reference the plugin cannot get from NuGet.
+      - name: Download BepInEx
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'BepInEx.zip'
+          Invoke-WebRequest -Uri 'https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.6/BepInEx_win_x64_5.4.23.6.zip' -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'BepInEx') -Force
+
+      # No game install on the runner: the game assembly comes from the stub in ci/refs.
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet build WikiBook.csproj -c Release --nologo `
+            -p:UseGameRefs=false `
+            -p:DeployToGame=false `
+            -p:BepInExCore="$env:RUNNER_TEMP\BepInEx\BepInEx\core"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path WikiBook.csproj -Pattern '<BepInExPluginVersion>(.+)</BepInExPluginVersion>').Matches[0].Groups[1].Value
+          $name = "WikiBook-$version"
+          $staging = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Copy-Item bin\Release\WikiBook.dll $staging
+          Copy-Item README.md, LICENSE $staging
+          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory(
+            $staging, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Guards the two things a release must never contain: debug symbols and local paths.
+      - name: Verify package
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($env:ZIP)
+          try {
+            $entries = $archive.Entries | ForEach-Object { $_.FullName } | Sort-Object
+          }
+          finally {
+            $archive.Dispose()
+          }
+
+          $expected = @('LICENSE', 'README.md', 'WikiBook.dll')
+          $difference = Compare-Object $expected $entries
+          if ($difference) {
+            throw "unexpected package contents: $($difference | Out-String)"
+          }
+
+          if ($entries -match '\.pdb$|\.xml$') {
+            throw 'package contains debug or documentation files'
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes((Join-Path $env:GITHUB_WORKSPACE 'bin\Release\WikiBook.dll'))
+          $text = [System.Text.Encoding]::Unicode.GetString($bytes) + [System.Text.Encoding]::UTF8.GetString($bytes)
+          foreach ($pattern in @('[A-Za-z]:\\Users\\', '[A-Za-z]:\\a\\', '\\Users\\')) {
+            if ($text -match $pattern) {
+              throw "assembly embeds a local path (matched $pattern)"
+            }
+          }
+
+          Write-Host "package ok: $env:ZIP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WikiBook-${{ env.VERSION }}
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME $env:ZIP --title "Wiki Book $env:VERSION" --generate-notes

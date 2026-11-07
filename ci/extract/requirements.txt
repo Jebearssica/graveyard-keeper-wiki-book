@@ -1,0 +1,3 @@
+# Developer-only dependencies for ci/extract/extract.py. Not used by the plugin build.
+UnityPy==1.25.4
+TypeTreeGeneratorAPI==0.0.10

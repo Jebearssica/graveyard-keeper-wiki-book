@@ -1,0 +1,131 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <AssemblyName>WikiBook</AssemblyName>
+    <RootNamespace>WikiBook</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- No debug symbols in the shipped assembly: PDB paths would embed local directories. -->
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
+    <Deterministic>true</Deterministic>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+
+    <BepInExPluginGuid>gk.wikibook</BepInExPluginGuid>
+    <BepInExPluginName>Wiki Book</BepInExPluginName>
+    <BepInExPluginVersion>0.3.0</BepInExPluginVersion>
+  </PropertyGroup>
+
+  <!--
+    Two ways to build.
+
+    Against a real install (the default): the game directory is detected when this project sits inside it
+    (for example <game>\mods-work\WikiBook), otherwise the default Steam location is used. Override with
+    -p:GameDir="<game install>"; the plugin is copied into the game when BepInEx is installed.
+
+    Without a game install (what CI does):
+        dotnet build -c Release -p:UseGameRefs=false -p:DeployToGame=false -p:BepInExCore=<extracted BepInEx>\core
+    The game assembly is replaced by the declaration-only stub in ci/refs. See ci/README.md.
+  -->
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == '' AND Exists('$(MSBuildThisFileDirectory)..\..\Graveyard Keeper_Data\Managed\Assembly-CSharp.dll')">$(MSBuildThisFileDirectory)..\..</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Graveyard Keeper</GameDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)\Graveyard Keeper_Data\Managed</ManagedDir>
+    <BepInExCore Condition="'$(BepInExCore)' == ''">$(GameDir)\BepInEx\core</BepInExCore>
+
+    <UseGameRefs Condition="'$(UseGameRefs)' == '' AND Exists('$(ManagedDir)\Assembly-CSharp.dll')">true</UseGameRefs>
+    <UseGameRefs Condition="'$(UseGameRefs)' == ''">false</UseGameRefs>
+
+    <DeployToGame Condition="'$(DeployToGame)' == '' AND Exists('$(GameDir)\BepInEx\plugins')">true</DeployToGame>
+    <DeployToGame Condition="'$(DeployToGame)' == ''">false</DeployToGame>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.1.0" />
+    <!-- Keeps net481 buildable without the .NET Framework targeting pack. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Against the real game install. -->
+  <ItemGroup Condition="'$(UseGameRefs)' == 'true'">
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Nothing is publicized: the plugin only links against members that are public in the shipped game assembly and
+    reaches everything else through reflection (see GameAccess.cs). Keeping the real visibility means a direct access
+    to a protected/private member fails here instead of failing on a player's machine.
+  -->
+  <ItemGroup>
+    <!-- ci\ holds tooling and generated stubs, tests\ holds the out-of-game harness: neither is plugin source. -->
+    <Compile Remove="ci\**\*.cs" />
+    <Compile Remove="tests\**\*.cs" />
+    <!--
+      The stub project keeps its build output in ci\refs\*\bin|obj. Those DLLs must never be picked up by the
+      compiler: RAR prefers "candidate assembly files" over Reference HintPaths, so a leftover stub assembly named
+      Assembly-CSharp.dll would silently replace the real one.
+    -->
+    <None Remove="ci\**" />
+    <Content Remove="ci\**" />
+    <EmbeddedResource Remove="ci\**" />
+    <None Remove="tests\**" />
+    <Content Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+  </ItemGroup>
+
+  <!-- Without the game: a stub for the game assembly, Unity modules from NuGet. -->
+  <ItemGroup Condition="'$(UseGameRefs)' != 'true'">
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" IncludeAssets="compile" PrivateAssets="all" />
+    <ProjectReference Include="ci\refs\Assembly-CSharp\Assembly-CSharp.csproj" Private="false" />
+  </ItemGroup>
+
+  <!-- The shipped dataset. The runtime never reads GameDir; the file is embedded. -->
+  <ItemGroup>
+    <EmbeddedResource Include="data\wiki-zh-Hans.json" LogicalName="WikiBook.data.wiki-zh-Hans.json" />
+    <None Remove="data\**" />
+  </ItemGroup>
+
+  <Target Name="DeployToPlugins" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\WikiBook" />
+  </Target>
+
+</Project>
